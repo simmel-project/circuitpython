@@ -99,8 +99,8 @@ endif
 ###
 # Select which builtin modules to compile and include.
 
-ifeq ($(CIRCUITPY_AES),1)
-SRC_PATTERNS += aes/%
+ifeq ($(CIRCUITPY_AESIO),1)
+SRC_PATTERNS += aesio/%
 endif
 ifeq ($(CIRCUITPY_ANALOGIO),1)
 SRC_PATTERNS += analogio/%
@@ -344,8 +344,8 @@ SRC_SHARED_MODULE_ALL = \
 	bitbangio/__init__.c \
 	board/__init__.c \
 	busio/OneWire.c \
-	aes/__init__.c \
-	aes/aes.c \
+	aesio/__init__.c \
+	aesio/aes.c \
 	displayio/Bitmap.c \
 	displayio/ColorConverter.c \
 	displayio/Display.c \
