@@ -49,7 +49,9 @@
 //--------------------------------------------------------------------+
 #define CFG_TUSB_RHPORT0_MODE       OPT_MODE_DEVICE
 
+#ifndef CFG_TUSB_DEBUG
 #define CFG_TUSB_DEBUG              0
+#endif
 
 /*------------- RTOS -------------*/
 #define CFG_TUSB_OS                 OPT_OS_NONE
