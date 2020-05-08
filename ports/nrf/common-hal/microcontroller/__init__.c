@@ -48,35 +48,46 @@ void common_hal_mcu_delay_us(uint32_t delay) {
     NRFX_DELAY_US(delay);
 }
 
-static volatile uint32_t nesting_count = 0;
+static volatile uint32_t nesting_count = 1; // Start at 1, because interrupts start disabled.
 static uint8_t is_nested_critical_region;
 static uint8_t sd_is_enabled = false;
 void common_hal_mcu_disable_interrupts() {
+    if (nesting_count++ > 0)
+        return;
+
+    // If interrupts are already disabled, crash
+    if (__get_PRIMASK())
+        reset_into_safe_mode(HARD_CRASH);
+
     sd_softdevice_is_enabled(&sd_is_enabled);
     if (sd_is_enabled) {
         sd_nvic_critical_region_enter(&is_nested_critical_region);
     } else {
         __disable_irq();
         __DMB();
-        nesting_count++;
     }
 }
 
 void common_hal_mcu_enable_interrupts() {
+    if (nesting_count == 0) {
+        // This is very very bad because it means there was mismatched disable/enables so we
+        // crash.
+        reset_into_safe_mode(HARD_CRASH);
+    }
+    nesting_count--;
+    if (nesting_count > 0) {
+        return;
+    }
+
+    // If interrupts are already enabled, crash
+    if (__get_PRIMASK())
+        reset_into_safe_mode(HARD_CRASH);
+
     // Don't check here if SD is enabled, because we'll crash if interrupts
     // were turned off and sd_softdevice_is_enabled is called.
     if (sd_is_enabled) {
         sd_nvic_critical_region_exit(is_nested_critical_region);
     } else {
-        if (nesting_count == 0) {
-            // This is very very bad because it means there was mismatched disable/enables so we
-            // crash.
-            reset_into_safe_mode(HARD_CRASH);
-        }
-        nesting_count--;
-        if (nesting_count > 0) {
-            return;
-        }
         __DMB();
         __enable_irq();
     }
