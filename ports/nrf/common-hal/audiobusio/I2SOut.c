@@ -35,23 +35,25 @@
 #include "py/obj.h"
 #include "py/runtime.h"
 
+#define RECORDING_SAMPLE_RATE 48000
+
 static audiobusio_i2sout_obj_t *instance;
 
 struct { int16_t l, r; } static_sample16 = {0x8000, 0x8000};
 struct { uint8_t l1, r1, l2, r2; } static_sample8 = {0x80, 0x80, 0x80, 0x80};
 
 struct frequency_info { uint32_t RATIO; uint32_t MCKFREQ; int sample_rate; float abserr; };
-struct ratio_info { uint32_t RATIO; int16_t divisor; bool can_16bit; };
+struct ratio_info { uint32_t RATIO; int16_t divisor; bool can_16bit; bool can_24bit; };
 struct ratio_info ratios[] = {
-    { I2S_CONFIG_RATIO_RATIO_32X,   32,  true },
-    { I2S_CONFIG_RATIO_RATIO_48X,   48, false },
-    { I2S_CONFIG_RATIO_RATIO_64X,   64,  true },
-    { I2S_CONFIG_RATIO_RATIO_96X,   96,  true },
-    { I2S_CONFIG_RATIO_RATIO_128X, 128,  true },
-    { I2S_CONFIG_RATIO_RATIO_192X, 192,  true },
-    { I2S_CONFIG_RATIO_RATIO_256X, 256,  true },
-    { I2S_CONFIG_RATIO_RATIO_384X, 384,  true },
-    { I2S_CONFIG_RATIO_RATIO_512X, 512,  true },
+    { I2S_CONFIG_RATIO_RATIO_32X,   32,  true,  true },
+    { I2S_CONFIG_RATIO_RATIO_48X,   48, false, false },
+    { I2S_CONFIG_RATIO_RATIO_64X,   64,  true,  true },
+    { I2S_CONFIG_RATIO_RATIO_96X,   96,  true, false },
+    { I2S_CONFIG_RATIO_RATIO_128X, 128,  true,  true },
+    { I2S_CONFIG_RATIO_RATIO_192X, 192,  true,  true },
+    { I2S_CONFIG_RATIO_RATIO_256X, 256,  true,  true },
+    { I2S_CONFIG_RATIO_RATIO_384X, 384,  true,  true },
+    { I2S_CONFIG_RATIO_RATIO_512X, 512,  true,  true },
 };
 
 struct mclk_info { uint32_t MCKFREQ; int divisor; };
@@ -84,6 +86,10 @@ void choose_i2s_clocking(audiobusio_i2sout_obj_t *self, uint32_t sample_rate) {
     for (size_t ri=0; ri<sizeof(ratios) / sizeof(ratios[0]); ri++) {
         if (NRF_I2S->CONFIG.SWIDTH == I2S_CONFIG_SWIDTH_SWIDTH_16Bit
                 && !ratios[ri].can_16bit) {
+            continue;
+        }
+        if (NRF_I2S->CONFIG.SWIDTH == I2S_CONFIG_SWIDTH_SWIDTH_24Bit
+                && !ratios[ri].can_24bit) {
             continue;
         }
 
@@ -198,6 +204,7 @@ void common_hal_audiobusio_i2sout_construct(audiobusio_i2sout_obj_t* self,
     claim_pin(word_select);
     claim_pin(data);
 
+    self->recording_rate = RECORDING_SAMPLE_RATE;
     NRF_I2S->PSEL.SCK = self->bit_clock_pin_number = bit_clock->number;
     NRF_I2S->PSEL.LRCK = self->word_select_pin_number = word_select->number;
     NRF_I2S->PSEL.SDOUT = self->data_pin_number = data->number;
@@ -317,6 +324,98 @@ bool common_hal_audiobusio_i2sout_get_playing(audiobusio_i2sout_obj_t* self) {
         NRF_I2S->EVENTS_STOPPED = 0;
     }
     return self->playing;
+}
+
+uint32_t common_hal_audiobusio_i2sout_record_to_buffer(audiobusio_i2sout_obj_t* self,
+    uint16_t* buffer, uint32_t length, uint8_t buf_typecode) {
+    float *buffer_f = (float *)buffer;
+    uint32_t *buffer_32 = (uint32_t *)buffer;
+
+    NRF_I2S->CONFIG.SWIDTH = I2S_CONFIG_SWIDTH_SWIDTH_24Bit;
+    NRF_I2S->CONFIG.CHANNELS = I2S_CONFIG_CHANNELS_CHANNELS_Left;
+    NRF_I2S->PSEL.SDOUT = 0xFFFFFFFF;
+    NRF_I2S->PSEL.SDIN = self->data_pin_number;
+    choose_i2s_clocking(self, self->recording_rate);
+
+    NRF_I2S->CONFIG.RXEN = I2S_CONFIG_RXEN_RXEN_Enabled;
+    NRF_I2S->CONFIG.TXEN = I2S_CONFIG_TXEN_TXEN_Disabled;
+
+    NRF_I2S->RXD.PTR = (uintptr_t)buffer;
+    NRF_I2S->TXD.PTR = 0xFFFFFFFF;
+    NRF_I2S->RXTXD.MAXCNT = length; // length is in units of 32-bits (most likely)
+    // Turn on the interrupt to the NVIC but not within the NVIC itself. This will wake the CPU and
+    // keep it awake until it is serviced without triggering an interrupt handler.
+    NRF_I2S->INTENSET = I2S_INTENSET_RXPTRUPD_Msk;
+    NRF_I2S->ENABLE = I2S_ENABLE_ENABLE_Enabled;
+
+    NRF_I2S->TASKS_START = 1;
+
+    // The first event fires indicating the hardware accepted the buffer
+    // and that it's started writing to it.
+    while (!NRF_I2S->EVENTS_RXPTRUPD) {
+       MICROPY_VM_HOOK_LOOP;
+    }
+    NRF_I2S->EVENTS_RXPTRUPD = 0;
+    NRF_I2S->RXTXD.MAXCNT = 0;
+
+    // The second event fires indicating the buffer has filled
+    // and that the I2S core has latched a second buffer.
+    // Note that there is a race condition here, because the
+    // I2S engine will begin writing over the buffer a second time.
+    // Audio data is slow enough that this shouldn't matter, but there
+    // is a potential for the first few samples to get overwritten
+    // if the VM Hook Loop is very slow.
+    while (!NRF_I2S->EVENTS_RXPTRUPD) {
+       MICROPY_VM_HOOK_LOOP;
+    }
+
+    // Stop the task as soon as possible to prevent it from overwriting the buffer.
+    NRF_I2S->TASKS_STOP = 1;
+    NRF_I2S->CONFIG.RXEN = I2S_CONFIG_RXEN_RXEN_Disabled;
+    NRF_I2S->EVENTS_RXPTRUPD = 0;
+    NRF_I2S->RXTXD.MAXCNT = 0;
+
+    NRF_I2S->CONFIG.TXEN = I2S_CONFIG_TXEN_TXEN_Enabled;
+    NRF_I2S->PSEL.SDIN = 0xFFFFFFFF;
+    NRF_I2S->PSEL.SDOUT = self->data_pin_number;
+
+    switch (buf_typecode) {
+    case 'f':
+        for (uint32_t i=0; i<length; i++) {
+            buffer_f[i] = buffer_32[i];
+        }
+        break;
+    case 'I':
+    case 'L':
+        for (uint32_t i=0; i<length; i++) {
+            buffer_32[i] = buffer_32[i] + 16777216;
+        }
+        break;
+    case 'i':
+    case 'l':
+        // for (uint32_t i=0; i<length; i++) {
+        //     buffer_32[i] = buffer_32[i] + 16777216;
+        // }
+        break;
+    default:
+        asm("bkpt");
+    }
+
+    NRF_I2S->INTENCLR = I2S_INTENSET_RXPTRUPD_Msk;
+    NRF_I2S->ENABLE = I2S_ENABLE_ENABLE_Disabled;
+    return length;
+}
+
+uint8_t common_hal_audiobusio_i2sout_get_bit_depth(audiobusio_i2sout_obj_t* self) {
+    return 24;
+}
+
+void common_hal_audiobusio_i2sout_set_recording_rate(audiobusio_i2sout_obj_t* self, int rate) {
+    self->recording_rate = rate;
+}
+
+uint32_t common_hal_audiobusio_i2sout_get_recording_rate(audiobusio_i2sout_obj_t* self) {
+    return self->recording_rate;
 }
 
 void i2s_background(void) {

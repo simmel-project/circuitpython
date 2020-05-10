@@ -178,6 +178,20 @@ STATIC mp_obj_t audiobusio_i2sout_obj_play(size_t n_args, const mp_obj_t *pos_ar
 }
 MP_DEFINE_CONST_FUN_OBJ_KW(audiobusio_i2sout_play_obj, 1, audiobusio_i2sout_obj_play);
 
+//|   .. method:: record(destination, destination_length)
+//|
+//|     Records destination_length bytes of samples to destination. This is
+//|     blocking.
+//|
+//|     An IOError may be raised when the destination is too slow to record the
+//|     audio at the given rate. For internal flash, writing all 1s to the file
+//|     before recording is recommended to speed up writes.
+//|
+//|     :return: The number of samples recorded. If this is less than ``destination_length``,
+//|       some samples were missed due to processing time.
+//|
+
+
 //|   .. method:: stop()
 //|
 //|     Stops playback.
@@ -258,6 +272,87 @@ const mp_obj_property_t audiobusio_i2sout_paused_obj = {
               (mp_obj_t)&mp_const_none_obj},
 };
 
+//|   .. attribute:: recording_rate
+//|
+//|     Sample rate (in Hz) used when recording
+//|
+STATIC mp_obj_t audiobusio_i2sout_obj_get_recording_rate(mp_obj_t self_in) {
+    audiobusio_i2sout_obj_t *self = MP_OBJ_TO_PTR(self_in);
+    check_for_deinit(self);
+    return MP_OBJ_NEW_SMALL_INT(common_hal_audiobusio_i2sout_get_recording_rate(self));
+}
+MP_DEFINE_CONST_FUN_OBJ_1(audiobusio_i2sout_get_recording_rate_obj, audiobusio_i2sout_obj_get_recording_rate);
+
+
+STATIC mp_obj_t audiobusio_i2sout_obj_set_recording_rate(mp_obj_t self_in, mp_obj_t rate_obj) {
+    audiobusio_i2sout_obj_t *self = MP_OBJ_TO_PTR(self_in);
+    check_for_deinit(self);
+
+    int rate = mp_obj_get_int(rate_obj);
+    if (rate <= 0) {
+        mp_raise_TypeError(translate("Sample rate must be > 0"));
+    }
+    common_hal_audiobusio_i2sout_set_recording_rate(self, rate);
+    return mp_const_none;
+}
+MP_DEFINE_CONST_FUN_OBJ_2(audiobusio_i2sout_set_recording_rate_obj, audiobusio_i2sout_obj_set_recording_rate);
+
+const mp_obj_property_t audiobusio_i2sout_recording_rate_obj = {
+    .base.type = &mp_type_property,
+    .proxy = {(mp_obj_t)&audiobusio_i2sout_get_recording_rate_obj,
+              (mp_obj_t)&audiobusio_i2sout_set_recording_rate_obj,
+              (mp_obj_t)&mp_const_none_obj},
+};
+
+//|   .. method:: record(destination, destination_length)
+//|
+//|     Records destination_length bytes of samples to destination. This is
+//|     blocking.
+//|
+//|     An IOError may be raised when the destination is too slow to record the
+//|     audio at the given rate. For internal flash, writing all 1s to the file
+//|     before recording is recommended to speed up writes.
+//|
+//|     :return: The number of samples recorded. If this is less than ``destination_length``,
+//|       some samples were missed due to processing time.
+//|
+STATIC mp_obj_t audiobusio_i2sout_obj_record(mp_obj_t self_obj, mp_obj_t destination, mp_obj_t destination_length) {
+    audiobusio_i2sout_obj_t *self = MP_OBJ_TO_PTR(self_obj);
+    check_for_deinit(self);
+    if (!MP_OBJ_IS_SMALL_INT(destination_length) || MP_OBJ_SMALL_INT_VALUE(destination_length) < 0) {
+        mp_raise_TypeError(translate("destination_length must be an int >= 0"));
+    }
+    uint32_t length = MP_OBJ_SMALL_INT_VALUE(destination_length);
+
+    mp_buffer_info_t bufinfo;
+    if (MP_OBJ_IS_TYPE(destination, &mp_type_fileio)) {
+        mp_raise_NotImplementedError(translate("Cannot record to a file"));
+    } else if (mp_get_buffer(destination, &bufinfo, MP_BUFFER_WRITE)) {
+        if (bufinfo.len / mp_binary_get_size('@', bufinfo.typecode, NULL) < length) {
+            mp_raise_ValueError(translate("Destination capacity is smaller than destination_length."));
+        }
+        uint8_t bit_depth = common_hal_audiobusio_i2sout_get_bit_depth(self);
+        /*if (bufinfo.typecode != 'H' && bit_depth == 16) {
+            mp_raise_ValueError(translate("destination buffer must be an array of type 'H' for bit_depth = 16"));
+        } else if (bufinfo.typecode != 'B' && bufinfo.typecode != BYTEARRAY_TYPECODE && bit_depth == 8) {
+            mp_raise_ValueError(translate("destination buffer must be a bytearray or array of type 'B' for bit_depth = 8"));
+        */
+        if (bit_depth == 24 || bit_depth == 32) {
+            if (bufinfo.typecode != 'I' && bufinfo.typecode != 'i' && bufinfo.typecode != 'L' && bufinfo.typecode != 'L' && bufinfo.typecode != 'f') {
+                mp_raise_ValueError(translate("destination buffer must be an array of type 'I', 'i', 'L', or 'l' for bit_depth = 24 or bit_depth = 32"));
+            }
+        } else {
+            mp_raise_ValueError(translate("bit depth not supported"));
+        }
+        // length is the buffer length in slots, not bytes.
+        uint32_t length_written =
+            common_hal_audiobusio_i2sout_record_to_buffer(self, bufinfo.buf, length, bufinfo.typecode);
+        return MP_OBJ_NEW_SMALL_INT(length_written);
+    }
+    return mp_const_none;
+}
+MP_DEFINE_CONST_FUN_OBJ_3(audiobusio_i2sout_record_obj, audiobusio_i2sout_obj_record);
+
 STATIC const mp_rom_map_elem_t audiobusio_i2sout_locals_dict_table[] = {
     // Methods
     { MP_ROM_QSTR(MP_QSTR___del__), MP_ROM_PTR(&audiobusio_i2sout_deinit_obj) },
@@ -265,6 +360,7 @@ STATIC const mp_rom_map_elem_t audiobusio_i2sout_locals_dict_table[] = {
     { MP_ROM_QSTR(MP_QSTR___enter__), MP_ROM_PTR(&default___enter___obj) },
     { MP_ROM_QSTR(MP_QSTR___exit__), MP_ROM_PTR(&audiobusio_i2sout___exit___obj) },
     { MP_ROM_QSTR(MP_QSTR_play), MP_ROM_PTR(&audiobusio_i2sout_play_obj) },
+    { MP_ROM_QSTR(MP_QSTR_record), MP_ROM_PTR(&audiobusio_i2sout_record_obj) },
     { MP_ROM_QSTR(MP_QSTR_stop), MP_ROM_PTR(&audiobusio_i2sout_stop_obj) },
     { MP_ROM_QSTR(MP_QSTR_pause), MP_ROM_PTR(&audiobusio_i2sout_pause_obj) },
     { MP_ROM_QSTR(MP_QSTR_resume), MP_ROM_PTR(&audiobusio_i2sout_resume_obj) },
@@ -272,6 +368,7 @@ STATIC const mp_rom_map_elem_t audiobusio_i2sout_locals_dict_table[] = {
     // Properties
     { MP_ROM_QSTR(MP_QSTR_playing), MP_ROM_PTR(&audiobusio_i2sout_playing_obj) },
     { MP_ROM_QSTR(MP_QSTR_paused), MP_ROM_PTR(&audiobusio_i2sout_paused_obj) },
+    { MP_ROM_QSTR(MP_QSTR_recording_rate), MP_ROM_PTR(&audiobusio_i2sout_recording_rate_obj) },
 };
 STATIC MP_DEFINE_CONST_DICT(audiobusio_i2sout_locals_dict, audiobusio_i2sout_locals_dict_table);
 

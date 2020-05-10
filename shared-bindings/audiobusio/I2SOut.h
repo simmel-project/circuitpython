@@ -29,6 +29,7 @@
 
 #include "common-hal/audiobusio/I2SOut.h"
 #include "common-hal/microcontroller/Pin.h"
+#include "extmod/vfs_fat.h"
 
 extern const mp_obj_type_t audiobusio_i2sout_type;
 
@@ -44,5 +45,10 @@ bool common_hal_audiobusio_i2sout_get_playing(audiobusio_i2sout_obj_t* self);
 void common_hal_audiobusio_i2sout_pause(audiobusio_i2sout_obj_t* self);
 void common_hal_audiobusio_i2sout_resume(audiobusio_i2sout_obj_t* self);
 bool common_hal_audiobusio_i2sout_get_paused(audiobusio_i2sout_obj_t* self);
+uint32_t common_hal_audiobusio_i2sout_record_to_buffer(audiobusio_i2sout_obj_t* self,
+    uint16_t* buffer, uint32_t length, uint8_t buf_typecode);
+uint8_t common_hal_audiobusio_i2sout_get_bit_depth(audiobusio_i2sout_obj_t* self);
+uint32_t common_hal_audiobusio_i2sout_get_recording_rate(audiobusio_i2sout_obj_t* self);
+void common_hal_audiobusio_i2sout_set_recording_rate(audiobusio_i2sout_obj_t* self, int rate);
 
 #endif // MICROPY_INCLUDED_SHARED_BINDINGS_AUDIOBUSIO_I2SOUT_H

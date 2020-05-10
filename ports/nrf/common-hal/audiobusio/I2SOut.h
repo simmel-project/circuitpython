@@ -38,6 +38,7 @@ typedef struct {
 
     uint16_t buffer_length;
     uint16_t sample_rate;
+    uint32_t recording_rate;
     uint32_t hold_value;
 
     uint8_t next_buffer;
