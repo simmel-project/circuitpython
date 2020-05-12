@@ -331,18 +331,12 @@ STATIC mp_obj_t audiobusio_i2sout_obj_record(mp_obj_t self_obj, mp_obj_t destina
         if (bufinfo.len / mp_binary_get_size('@', bufinfo.typecode, NULL) < length) {
             mp_raise_ValueError(translate("Destination capacity is smaller than destination_length."));
         }
-        uint8_t bit_depth = common_hal_audiobusio_i2sout_get_bit_depth(self);
-        /*if (bufinfo.typecode != 'H' && bit_depth == 16) {
-            mp_raise_ValueError(translate("destination buffer must be an array of type 'H' for bit_depth = 16"));
-        } else if (bufinfo.typecode != 'B' && bufinfo.typecode != BYTEARRAY_TYPECODE && bit_depth == 8) {
-            mp_raise_ValueError(translate("destination buffer must be a bytearray or array of type 'B' for bit_depth = 8"));
-        */
-        if (bit_depth == 24 || bit_depth == 32) {
-            if (bufinfo.typecode != 'I' && bufinfo.typecode != 'i' && bufinfo.typecode != 'L' && bufinfo.typecode != 'L' && bufinfo.typecode != 'f') {
-                mp_raise_ValueError(translate("destination buffer must be an array of type 'I', 'i', 'L', or 'l' for bit_depth = 24 or bit_depth = 32"));
-            }
-        } else {
-            mp_raise_ValueError(translate("bit depth not supported"));
+        if (bufinfo.typecode != 'H' && bufinfo.typecode != 'h' &&
+            bufinfo.typecode != 'I' && bufinfo.typecode != 'i' &&
+            bufinfo.typecode != 'L' && bufinfo.typecode != 'l' &&
+            bufinfo.typecode != 'f') {
+            mp_raise_ValueError(translate("destination buffer must be an array of "
+                                          "type 'H', 'h', 'I', 'i', 'L', 'l', or 'f'"));
         }
         // length is the buffer length in slots, not bytes.
         uint32_t length_written =
